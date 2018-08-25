@@ -1,0 +1,69 @@
+#!/bin/bash
+# Codelinting and testing utility
+#
+
+msg_color_magenta='\033[1;35m'
+msg_color_yellow='\033[0;33m'
+msg_color_none='\033[0m'
+
+phpcs_local_exec="phpcs.phar"
+phpcs_command="php $phpcs_local_exec"
+phpcs_vendor_command="vendor/bin/phpcs"
+phpcs_global_command="phpcs"
+phpcs_files_to_check="${@:2}"
+phpcs_args=$1
+phpcs_command="$phpcs_command $phpcs_args $phpcs_files_to_check"
+es_lint_command="./node_modules/.bin/eslint"
+get_diff_js=$(git diff --cached --name-only | grep -E '\.(js)$')
+ES_command_result=`eval $es_lint_command $get_diff_js`
+get_diff=$(git diff --cached --name-only | grep -E '\.(php)$')
+command_result=`eval $phpcs_command $get_diff`
+
+echo -en "${msg_color_yellow}Codesniffers and unit test runs ...${msg_color_none} \n"
+function phpunit () {
+	phpunit_command="vendor/bin/phpunit"
+	echo "Running phpunit"
+	$phpunit_command  tests/
+}
+
+# ensure we have phpcs installed
+if [ -f "$phpcs_vendor_command" ]; then
+	phpcs_command=$phpcs_vendor_command
+else
+    if hash phpcs 2>/dev/null; then
+        phpcs_command=$phpcs_global_command
+    else
+        if [ -f "$phpcs_local_exec" ]; then
+            phpcs_command=$phpcs_command
+        else
+            echo "No valid PHP Codesniffer executable found! Please have one available as either $phpcs_vendor_command, $phpcs_global_command or $phpcs_local_exec"
+            exit 1
+        fi
+    fi
+fi
+
+echo "Running eslint"
+for file in $get_diff_js
+do
+  git show ":$file" | $es_lint_command "$file"
+  if [[ $ES_command_result =~ error ]]; then
+    echo -en "${msg_color_magenta}Errors detected by eslint ... ${msg_color_none} \n"
+    echo "Lint failed on staged file '$file'. Please check your code and try again."
+    exit 1
+  fi
+done
+
+echo "Running php linter"
+for file in $get_diff
+do
+  git show ":$file" | $phpcs_command  --ignore=*/tests/*,*/views/* --standard=PSR2 "$file"
+  if [[ $command_result =~ ERROR ]]; then
+    echo -en "${msg_color_magenta}Errors detected by PHP CodeSniffer ... ${msg_color_none} \n"
+    echo "Lint failed on staged file '$file'. Please check your code and try again."
+    exit 1
+  fi
+done
+
+phpunit
+
+exit 0
